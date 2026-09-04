@@ -1,0 +1,59 @@
+/* ====================================================================
+   Panel de administracion — estilos propios
+   Bootstrap 5 hace el trabajo pesado; aqui solo va lo que le falta.
+   ==================================================================== */
+
+/* Las citas canceladas siguen visibles pero se leen como tachadas: el
+   personal necesita saber que ESTUVO ahi, y que ya no ocupa. */
+.appt-cancelled {
+    text-decoration: line-through;
+    opacity: .65;
+}
+
+/* FullCalendar trae tipografia propia mas grande de lo que encaja con
+   Bootstrap. Se alinea con el resto del panel. */
+.fc {
+    font-size: .875rem;
+}
+
+.fc .fc-toolbar-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.fc .fc-button {
+    padding: .25rem .6rem;
+    font-size: .8125rem;
+}
+
+.fc-event {
+    cursor: pointer;
+    border-width: 0 0 0 3px;
+}
+
+.fc-event:focus-visible {
+    outline: 2px solid var(--bs-primary);
+    outline-offset: 2px;
+}
+
+/* La franja de "ahora" mas visible que el gris por defecto. */
+.fc .fc-timegrid-now-indicator-line {
+    border-color: var(--bs-danger);
+    border-width: 2px;
+}
+
+/* En movil, la barra del calendario se apila en vez de comprimirse
+   hasta ser inservible. */
+@media (max-width: 575.98px) {
+    .fc .fc-toolbar {
+        flex-direction: column;
+        gap: .5rem;
+    }
+}
+
+/* Bootstrap solo pinta .invalid-feedback si el .is-invalid es hermano
+   inmediato. Dentro de un .input-group la estructura cambia y el mensaje
+   se queda oculto: esto lo restaura. */
+.input-group > .is-invalid ~ .invalid-feedback {
+    display: block;
+}

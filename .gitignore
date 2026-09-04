@@ -1,0 +1,73 @@
+# =====================================================================
+#  SISTEMA DE RESERVAS — .gitignore
+# =====================================================================
+
+# ---------- Secretos: nunca, bajo ninguna circunstancia ----------
+#
+# Se ignora TODO lo que empiece por .env y luego se rescata la unica
+# excepcion. Es al reves de lo intuitivo, y a proposito.
+#
+# El patron anterior listaba variantes (.env, .env.local, .env.*.local) y
+# dejaba fuera cualquier otra: un .env.bak creado al editar, un .env.old,
+# un .env.produccion. Cualquiera de esos se habria subido con las
+# credenciales dentro, y en un repositorio publico eso no se arregla
+# borrando el archivo: hay que reescribir el historial y rotar las claves.
+#
+# Con "ignora todo, salvo el ejemplo" el descuido tiene que ser
+# deliberado (git add -f), no un despiste de nomenclatura.
+.env*
+!.env.example
+
+*.pem
+*.key
+*.p12
+deploy.env
+*credentials*
+*secret*
+
+# ---------- Dependencias ----------
+/vendor/
+/node_modules/
+# composer.lock SI se versiona: es una aplicacion, no una libreria, y el
+# lock es lo que garantiza que todos instalen exactamente las mismas
+# versiones. Ya generado por "composer install".
+
+# ---------- Archivos generados en tiempo de ejecucion ----------
+/storage/cache/*
+!/storage/cache/.gitkeep
+/storage/logs/*
+!/storage/logs/.gitkeep
+/storage/sessions/*
+!/storage/sessions/.gitkeep
+
+# ---------- Volcados y respaldos de base de datos ----------
+*.sql.gz
+*.dump
+/database/backups/
+# database/schema.sql y database/seed.sql SI se versionan: son parte del
+# proyecto, no respaldos.
+
+# ---------- Herramientas y pruebas ----------
+/.phpunit.cache/
+.phpunit.result.cache
+/coverage/
+/build/
+
+# ---------- Editores e IDE ----------
+/.idea/
+/.vscode/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# ---------- Sistema operativo ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# ---------- Despliegue ----------
+/.lftp-mirror-state
+*.log

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         cacheDirectory=".phpunit.cache"
+         executionOrder="depends,defects"
+         beStrictAboutOutputDuringTests="true"
+         failOnRisky="true"
+         failOnWarning="true"
+         colors="true">
+
+    <testsuites>
+        <!-- Puras: sin base de datos, sin red. Corren siempre. -->
+        <testsuite name="Unit">
+            <directory>tests/Unit</directory>
+        </testsuite>
+
+        <!-- Contra una base real. Se saltan solas si no hay DB_TEST_*. -->
+        <testsuite name="Integration">
+            <directory>tests/Integration</directory>
+        </testsuite>
+    </testsuites>
+
+    <source>
+        <include>
+            <directory>src</directory>
+        </include>
+    </source>
+
+    <php>
+        <ini name="date.timezone" value="UTC"/>
+        <!--
+          Conexion para la suite de integracion. Si DB_TEST_NAME esta vacia,
+          esos tests se marcan como omitidos en vez de fallar: asi el
+          proyecto se puede clonar y correr los tests unitarios sin montar
+          nada. Ajusta el puerto a tu entorno (3306 XAMPP, 3307 docker).
+        -->
+        <env name="DB_TEST_HOST" value="127.0.0.1"/>
+        <env name="DB_TEST_PORT" value="3307"/>
+        <env name="DB_TEST_NAME" value="reservas"/>
+        <env name="DB_TEST_USER" value="root"/>
+        <env name="DB_TEST_PASS" value=""/>
+    </php>
+</phpunit>

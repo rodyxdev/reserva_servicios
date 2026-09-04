@@ -1,0 +1,101 @@
+# =====================================================================
+#  Entorno de desarrollo completo: PHP + MySQL + phpMyAdmin
+# =====================================================================
+#  Levantar todo:
+#      docker compose up -d
+#      docker compose exec app composer install
+#
+#  Aplicacion:   http://localhost:8080
+#  phpMyAdmin:   http://localhost:8081   (usuario: root / password: root)
+#
+#  La primera vez que arranca, MySQL ejecuta solo los archivos de
+#  database/ en orden alfabetico: schema.sql y luego seed.sql. Si quieres
+#  recargarlos desde cero:
+#      docker compose down -v && docker compose up -d
+#  (el -v borra el volumen; sin el, MySQL conserva los datos y NO
+#  vuelve a ejecutar los scripts de inicializacion)
+# =====================================================================
+
+services:
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    container_name: reservas_app
+    ports:
+      - "8080:80"
+    volumes:
+      # El codigo se monta en vivo: editas y recargas, sin reconstruir.
+      - .:/var/www/html
+      # Excluye vendor/ del bind mount en Windows/macOS, donde el I/O
+      # sobre carpetas montadas con miles de archivos es lentisimo.
+      - vendor_data:/var/www/html/vendor
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      # Estas ganan sobre .env y apuntan al servicio de MySQL de esta red.
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: reservas
+      DB_USER: reservas
+      DB_PASS: reservas
+      APP_ENV: development
+      APP_DEBUG: "true"
+      APP_URL: http://localhost:8080
+    networks:
+      - reservas_net
+
+  mysql:
+    image: mysql:8.0
+    container_name: reservas_mysql
+    command:
+      # El servidor arranca en UTC: coincide con lo que asume la aplicacion.
+      - --default-time-zone=+00:00
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: reservas
+      MYSQL_USER: reservas
+      MYSQL_PASSWORD: reservas
+    ports:
+      # Expuesto para poder conectar con un cliente externo (DBeaver, HeidiSQL).
+      # 3307 en el host para no chocar con un MySQL local o el de XAMPP.
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # Carga automatica en el primer arranque: schema.sql, luego seed.sql
+      - ./database:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # app espera a que esto pase antes de arrancar; si no, el primer
+      # request falla con "connection refused" mientras MySQL inicializa.
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - reservas_net
+
+  phpmyadmin:
+    image: phpmyadmin:5
+    container_name: reservas_phpmyadmin
+    ports:
+      - "8081:80"
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      UPLOAD_LIMIT: 64M
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - reservas_net
+
+volumes:
+  mysql_data:
+  vendor_data:
+
+networks:
+  reservas_net:
+    driver: bridge
