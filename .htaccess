@@ -1,0 +1,39 @@
+# =====================================================================
+#  .htaccess de la RAIZ — solo para hosting compartido
+# =====================================================================
+#  En local (Docker o un vhost de XAMPP bien configurado) el DocumentRoot
+#  apunta directamente a public/ y este archivo no se usa nunca.
+#
+#  En InfinityFree y similares no se puede mover el DocumentRoot: el
+#  servidor sirve /htdocs y punto. Si se sube el proyecto completo ahi,
+#  src/, config/ y .env quedarian accesibles por HTTP. Este archivo lo
+#  impide y redirige todo hacia public/.
+#
+#  Ver el README para la alternativa preferible: subir el CONTENIDO de
+#  public/ a la raiz de htdocs y el resto del proyecto a una carpeta
+#  hermana fuera de ella.
+# =====================================================================
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # No se expone /public en la URL: es un detalle de implementacion.
+    RewriteCond %{REQUEST_URI} !^/public/
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>
+
+Options -Indexes
+
+# ---------- Carpetas que jamas deben servirse por HTTP ----------
+RedirectMatch 404 ^/(src|config|database|scripts|storage|tests|vendor|docker|docs)(/|$)
+
+# ---------- Archivos sensibles ----------
+<FilesMatch "^(\.env.*|composer\.(json|lock)|.*\.md|.*\.sql|.*\.sh|phpunit\.xml.*|docker-compose\.yml|Dockerfile)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>

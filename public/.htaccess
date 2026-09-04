@@ -1,0 +1,63 @@
+# =====================================================================
+#  public/.htaccess — enrutado y endurecimiento
+# =====================================================================
+
+# ---------- Todo al front controller ----------
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Necesario en algunos hostings compartidos (InfinityFree incluido)
+    # donde la app no cuelga de la raiz del dominio.
+    RewriteBase /
+
+    # Si el archivo o directorio existe de verdad (CSS, JS, imagenes),
+    # se sirve tal cual sin pasar por PHP.
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+# ---------- Sin listados de directorio ----------
+Options -Indexes
+
+# ---------- Cabeceras de seguridad ----------
+# La aplicacion ya las manda desde SecurityHeadersMiddleware. Se repiten
+# aqui para que cubran tambien los archivos estaticos, que nunca llegan a
+# tocar PHP y por tanto no pasan por el middleware.
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# ---------- Nada que no sea el front controller ----------
+# Cinturon y tirantes: aunque alguien suba por error un .php a public/,
+# no sera ejecutable por HTTP.
+<FilesMatch "\.(?!(css|js|png|jpe?g|gif|svg|webp|ico|woff2?|map)$)[a-zA-Z0-9]+$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+<Files "index.php">
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Allow from all
+    </IfModule>
+</Files>
+
+# ---------- Cache de estaticos ----------
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css                "access plus 7 days"
+    ExpiresByType application/javascript  "access plus 7 days"
+    ExpiresByType image/svg+xml           "access plus 30 days"
+    ExpiresByType image/webp              "access plus 30 days"
+</IfModule>

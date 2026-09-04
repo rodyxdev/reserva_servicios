@@ -1,0 +1,44 @@
+{
+    "name": "rodyxdev/sistema-reservas",
+    "description": "Sistema de reservas y agenda para negocios de servicios (spa, consultorio, taller). PHP 8.3 + Slim 4 + MySQL 8.",
+    "type": "project",
+    "license": "MIT",
+    "keywords": ["reservas", "citas", "agenda", "slim", "php", "mysql"],
+    "require": {
+        "php": "^8.2",
+        "ext-pdo": "*",
+        "ext-pdo_mysql": "*",
+        "ext-json": "*",
+        "ext-mbstring": "*",
+        "slim/slim": "^4.14",
+        "slim/psr7": "^1.6",
+        "phpmailer/phpmailer": "^6.9",
+        "vlucas/phpdotenv": "^5.6"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "reset-demo": "php scripts/reset-demo.php",
+        "reminders": "php scripts/send-reminders.php"
+    },
+    "config": {
+        "sort-packages": true,
+        "platform": {
+            "php": "8.2.12"
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

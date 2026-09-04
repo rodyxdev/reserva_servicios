@@ -1,0 +1,42 @@
+# =====================================================================
+#  Normalizacion de finales de linea
+# =====================================================================
+#  El proyecto se desarrolla en Windows pero se despliega en Linux. Sin
+#  esto, Git convierte los archivos a CRLF en el directorio de trabajo y
+#  eso rompe cosas concretas:
+#
+#    - scripts/deploy.sh falla en Linux con "bad interpreter: /bin/bash^M"
+#    - Dockerfile y los .sh copiados al contenedor, igual
+#    - los .sql importados por consola pueden arrastrar \r a los datos
+#
+#  Se normaliza a LF dentro del repositorio SIEMPRE, que es lo que
+#  entienden todos los sistemas.
+# =====================================================================
+
+# Por defecto: Git decide si es texto y lo guarda con LF.
+* text=auto eol=lf
+
+# Scripts que se ejecutan en Linux: LF obligatorio, sin excepcion.
+*.sh    text eol=lf
+Dockerfile text eol=lf
+
+# Archivos que se importan en el servidor de base de datos.
+*.sql   text eol=lf
+
+# Binarios: que Git no los toque ni intente hacer diff.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.pdf   binary
+
+# El lock se versiona pero no aporta nada revisarlo linea a linea en un
+# pull request: se marca como generado para que GitHub lo colapse.
+composer.lock linguist-generated=true
+
+# Las capturas no cuentan como "codigo del proyecto" en las estadisticas
+# de lenguajes de GitHub.
+docs/** linguist-documentation=true
