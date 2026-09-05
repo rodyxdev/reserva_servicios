@@ -295,18 +295,61 @@ Unicode — y MariaDB no la conoce. **El `schema.sql` de este repositorio ya usa
 `utf8mb4_unicode_ci`**, que entienden los dos motores, precisamente por esto. Si
 generas un volcado desde un MySQL 8 propio, revísalo antes de subirlo.
 
-### 4. Estructura de carpetas
+### 4. Estructura de carpetas, y por qué el mismo `index.php` sirve para las dos
 
-El `DocumentRoot` es `/htdocs` y no se puede mover, así que el proyecto se reparte:
+El `DocumentRoot` es `/htdocs` y no se puede mover, así que el proyecto se reparte en
+dos carpetas hermanas:
 
 ```
-/htdocs/          <- contenido de public/ (index.php, assets, .htaccess)
-/app/             <- src/, config/, vendor/, scripts/   (fuera del alcance web)
+/htdocs/          <- CONTENIDO de public/ (index.php, assets/, .htaccess)
+/app/             <- config/, src/, vendor/, scripts/, storage/ y el .env
+                     (fuera del alcance web: nadie puede pedirlos por HTTP)
 ```
 
-Si tu plan no permite escribir fuera de `htdocs`, usa `/htdocs/app` y confía en el
-`.htaccess` de la raíz, que bloquea esas carpetas por HTTP. Es peor: prefiere siempre
-sacarlas del `DocumentRoot`.
+Fíjate en que `/htdocs` recibe el **contenido** de `public/`, no la carpeta `public`
+en sí. En local, en cambio, todo cuelga del mismo sitio:
+
+```
+proyecto/
+├── public/       <- DocumentRoot
+├── config/
+├── src/
+└── vendor/
+```
+
+Son dos disposiciones distintas, y `public/index.php` tiene que encontrar `vendor/` y
+`config/` en ambas. En local están en `__DIR__/../`; en InfinityFree, en
+`__DIR__/../app/`.
+
+**No hace falta editar nada ni mantener dos versiones del archivo.** El front
+controller localiza la raíz de la aplicación al arrancar: prueba primero el directorio
+padre (todo junto) y luego una carpeta `app/` hermana (separado), y se queda con la
+primera que contenga de verdad `vendor/autoload.php` **y** `config/settings.php`.
+Comprueba los archivos, no solo que el directorio exista: una carpeta `app/` a medio
+subir por FTP no debe dar por buena una raíz que no funciona.
+
+Si tu hosting usa una disposición distinta a estas dos, la variable de entorno
+`APP_ROOT` fuerza una ruta concreta.
+
+Cuando no encuentra ninguna, no falla con un `failed to open stream` que no orienta a
+nadie: responde con un 500 que dice qué buscaba y en qué rutas miró.
+
+El resto del código ya era compatible sin tocar nada, porque nunca asume dónde está el
+proyecto:
+
+| Archivo | Cómo resuelve las rutas | En `/app` |
+|---|---|---|
+| `config/settings.php` | `dirname(__DIR__)` | `/app` → busca `/app/.env` ✔ |
+| `scripts/*.php` | `dirname(__DIR__)` | `/app` → `/app/vendor` ✔ |
+| `public/.htaccess` | solo `RewriteBase /` | correcto cuando `htdocs` *es* el docroot ✔ |
+
+El `.htaccess` **de la raíz del proyecto** no interviene aquí: solo sirve cuando se
+sirve el proyecto entero desde una única carpeta, y `deploy.sh` no lo sube.
+
+Si tu plan no permite escribir fuera de `htdocs`, pon `DEPLOY_APP_PATH="/htdocs/app"`.
+Funciona igual —la detección encuentra `app/` de todos modos—, pero es peor: pasas de
+que esos archivos sean inalcanzables por diseño a que dependan de que el `.htaccess`
+se aplique. Prefiere siempre sacarlos del `DocumentRoot`.
 
 ### 5. Subida por FTP
 
@@ -332,12 +375,24 @@ servidor con la de desarrollo y apuntaría la aplicación a una base que allí n
 
 ### 6. Después del primer despliegue
 
-1. Crea `/app/.env` en el servidor con `APP_ENV=production`, `APP_DEBUG=false`,
-   `APP_URL=https://tudominio.rf.gd` y las credenciales reales.
-2. Ajusta la ruta de `vendor/autoload.php` en `public/index.php` si moviste `app/`.
-3. Da permiso de escritura a `/app/storage/logs` y `/app/storage/cache`.
-4. Programa el cron. InfinityFree suele permitir solo frecuencia horaria; para un
+1. **Sube el `.env` a mano, una sola vez**, a `/app/.env` (la carpeta que contiene
+   `config/`). Con `APP_ENV=production`, `APP_DEBUG=false`, `APP_URL` igual a tu
+   dominio real y las credenciales de la base. `deploy.sh` no lo sube nunca, a
+   propósito: hacerlo machacaría la configuración del servidor con la de desarrollo.
+2. Da permiso de escritura a `/app/storage/logs` y `/app/storage/cache`.
+3. Programa el cron. InfinityFree suele permitir solo frecuencia horaria; para un
    recordatorio a 24 horas, salir con hasta una hora de desfase es irrelevante.
+
+**Comprueba dos cosas antes de darlo por bueno:**
+
+- Abre `https://tudominio.rf.gd/.env` — tiene que dar **403 o 404**. Si te descarga el
+  archivo, está dentro del `DocumentRoot` y hay que moverlo.
+- Abre `https://tudominio.rf.gd/health` — debe responder JSON con `"db": {"ok": true}`
+  y `"time_zone": "+00:00"`.
+
+Si `/health` da error de conexión, el `.env` no está donde debe o las credenciales de
+MySQL no son correctas. Con `APP_DEBUG=false` el detalle no se muestra en pantalla: está
+en `/app/storage/logs/php-error.log`.
 
 ### 7. Correo saliente
 

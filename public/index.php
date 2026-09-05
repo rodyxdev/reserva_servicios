@@ -41,10 +41,84 @@ if (PHP_SAPI === 'cli-server') {
     }
 }
 
-require __DIR__ . '/../vendor/autoload.php';
+// ---------------------------------------------------------------------
+//  Localizar la raiz de la aplicacion
+// ---------------------------------------------------------------------
+//  El proyecto vive en dos disposiciones distintas segun donde corra, y
+//  este archivo funciona en ambas sin tener dos versiones que mantener.
+//
+//  A) TODO JUNTO — local, Docker, VPS con DocumentRoot propio:
+//
+//         proyecto/
+//         ├── public/    <- DocumentRoot, aqui esta este archivo
+//         ├── config/
+//         ├── src/
+//         └── vendor/
+//
+//     La raiz es el directorio padre de public/.
+//
+//  B) SEPARADO — hosting compartido tipo InfinityFree, donde el
+//     DocumentRoot es /htdocs y no se puede mover:
+//
+//         /htdocs/       <- contenido de public/, aqui esta este archivo
+//         /app/
+//         ├── config/
+//         ├── src/
+//         └── vendor/
+//
+//     La raiz es /app, una carpeta hermana de htdocs. Se pone fuera del
+//     DocumentRoot para que .env, src/ y vendor/ no sean alcanzables por
+//     HTTP bajo ninguna circunstancia.
+//
+//  Se prueban las ubicaciones en orden y se usa la primera que contenga
+//  realmente la aplicacion. La comprobacion busca vendor/autoload.php,
+//  no solo que el directorio exista: una carpeta "app" vacia, o a medio
+//  subir por FTP, no debe dar por buena una raiz que no funciona.
+//
+//  La variable de entorno APP_ROOT permite forzar una ruta concreta si
+//  tu hosting usa una disposicion distinta a estas dos.
+// ---------------------------------------------------------------------
+$appRoot = (static function (): string {
+    $candidatas = [];
+
+    if (($forzada = getenv('APP_ROOT')) !== false && $forzada !== '') {
+        $candidatas[] = rtrim($forzada, '/\\');
+    }
+
+    // A) todo junto: el padre de public/
+    $candidatas[] = dirname(__DIR__);
+
+    // B) separado: carpeta app/ hermana del DocumentRoot
+    $candidatas[] = dirname(__DIR__) . '/app';
+
+    foreach ($candidatas as $ruta) {
+        if (is_file($ruta . '/vendor/autoload.php') && is_file($ruta . '/config/settings.php')) {
+            return $ruta;
+        }
+    }
+
+    // Sin raiz no hay nada que hacer. Se falla con un mensaje que dice
+    // que falta y donde se busco, en vez de con un "failed to open
+    // stream" que no orienta a nadie.
+    http_response_code(500);
+    header('Content-Type: text/plain; charset=utf-8');
+
+    exit(
+        "Error de instalacion: no se encuentra la aplicacion.\n\n"
+        . "Se busco vendor/autoload.php y config/settings.php en:\n"
+        . '  - ' . implode("\n  - ", $candidatas) . "\n\n"
+        . "Comprueba que:\n"
+        . "  1. Ejecutaste 'composer install'.\n"
+        . "  2. Si separaste public/ del resto (hosting compartido), la\n"
+        . "     carpeta app/ esta donde toca. Puedes forzar su ruta con la\n"
+        . "     variable de entorno APP_ROOT.\n"
+    );
+})();
+
+require $appRoot . '/vendor/autoload.php';
 
 /** @var array<string,mixed> $settings */
-$settings = require __DIR__ . '/../config/settings.php';
+$settings = require $appRoot . '/config/settings.php';
 
 // -----------------------------------------------------------------------
 //  Zona horaria del proceso
@@ -78,7 +152,84 @@ Session::start(secure: $isHttps);
 // -----------------------------------------------------------------------
 //  Base de datos
 // -----------------------------------------------------------------------
-$pdo = Database::connect($settings['db']);
+//  Esta conexion ocurre ANTES de que Slim monte su manejador de errores,
+//  asi que si falla no hay nadie que convierta la excepcion en una
+//  respuesta presentable: con display_errors en Off, el visitante recibe
+//  una pagina completamente en blanco.
+//
+//  Y es el fallo numero uno en un primer despliegue (credenciales mal
+//  copiadas, host equivocado, base sin crear). Un 500 vacio no dice nada
+//  ni a quien lo despliega ni a quien lo visita.
+//
+//  Lo que se muestra depende de APP_DEBUG, y la diferencia es deliberada:
+//  el detalle de una excepcion de PDO incluye el host, el nombre de la
+//  base y a veces el usuario. Es justo lo que se necesita para arreglarlo
+//  en desarrollo, y justo lo que no debe verse en un sitio publico.
+// -----------------------------------------------------------------------
+try {
+    $pdo = Database::connect($settings['db']);
+} catch (Throwable $e) {
+    // El detalle completo va SIEMPRE al log, se muestre o no.
+    error_log('[arranque] fallo la conexion con la base de datos: ' . $e->getMessage());
+
+    for ($previa = $e->getPrevious(); $previa !== null; $previa = $previa->getPrevious()) {
+        error_log('[arranque]   causa: ' . $previa->getMessage());
+    }
+
+    // 503 y no 500: el codigo no esta roto, es una dependencia que no
+    // responde. Retry-After le dice a los buscadores que no desindexen
+    // el sitio por una caida pasajera.
+    http_response_code(503);
+    header('Retry-After: 300');
+    header('Content-Type: text/html; charset=utf-8');
+    header('X-Content-Type-Options: nosniff');
+    header('X-Frame-Options: DENY');
+
+    $detalle = '';
+
+    if ($debug) {
+        // Se recorre la cadena de excepciones porque Database::connect()
+        // envuelve la PDOException en una RuntimeException neutra: el
+        // motivo real (host desconocido, acceso denegado, base
+        // inexistente) esta en la causa, no en el mensaje de arriba.
+        $mensajes = [get_class($e) . ': ' . $e->getMessage()];
+
+        for ($previa = $e->getPrevious(); $previa !== null; $previa = $previa->getPrevious()) {
+            $mensajes[] = get_class($previa) . ': ' . $previa->getMessage();
+        }
+
+        $detalle = '<h2 style="font-size:1rem;margin:1.5rem 0 .5rem">Detalle (APP_DEBUG=true)</h2>'
+            . '<pre style="background:#f4f5f7;border:1px solid #e3e5e8;border-radius:6px;'
+            . 'padding:1rem;overflow-x:auto;font-size:.8125rem;line-height:1.5">'
+            . htmlspecialchars(implode("\n\n", $mensajes), ENT_QUOTES, 'UTF-8')
+            . '</pre>'
+            . '<p style="font-size:.8125rem;color:#6c757d">'
+            . 'Revisa DB_HOST, DB_PORT, DB_NAME, DB_USER y DB_PASS en tu archivo '
+            . '<code>.env</code>, y que la base exista y acepte conexiones desde este servidor. '
+            . 'Este bloque solo aparece con <code>APP_DEBUG=true</code>.'
+            . '</p>';
+    }
+
+    // Pagina autocontenida: no se usa el motor de plantillas ni se toca
+    // nada mas. Si la base no responde, lo unico seguro es asumir que
+    // tampoco funciona el resto.
+    echo '<!doctype html><html lang="es"><head><meta charset="utf-8">'
+        . '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        . '<meta name="robots" content="noindex">'
+        . '<title>Servicio no disponible</title></head>'
+        . '<body style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;'
+        . 'max-width:38rem;margin:4rem auto;padding:0 1.25rem;color:#212529;line-height:1.6">'
+        . '<h1 style="font-size:1.35rem;margin:0 0 .75rem">Servicio no disponible</h1>'
+        . '<p>No se pudo conectar a la base de datos. Verifica la configuracion.</p>'
+        . '<p style="color:#6c757d;font-size:.9375rem">'
+        . 'Si eres cliente y querias reservar una cita, vuelve a intentarlo en unos '
+        . 'minutos o llama al negocio por telefono. Tus citas ya confirmadas no se '
+        . 'ven afectadas.</p>'
+        . $detalle
+        . '</body></html>';
+
+    exit(1);
+}
 
 // -----------------------------------------------------------------------
 //  Aplicacion
@@ -107,6 +258,6 @@ $errorMiddleware = $app->addErrorMiddleware($debug, true, true);
 // Se cargan desde config/routes.php, que recibe la app, la conexion y la
 // configuracion. Mantener las rutas fuera de este archivo evita que el
 // front controller crezca hasta volverse ilegible.
-(require __DIR__ . '/../config/routes.php')($app, $pdo, $settings);
+(require $appRoot . '/config/routes.php')($app, $pdo, $settings);
 
 $app->run();
