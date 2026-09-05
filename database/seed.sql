@@ -323,34 +323,36 @@ VALUES
 -- blocked_until. Las canceladas se excluyen: su horario vuelve a estar
 -- libre, que es justamente el efecto de cancelar.
 --
--- Se usa una tabla temporal de numeros en vez de un CTE recursivo por
--- compatibilidad: los CTE requieren MySQL 8.0 / MariaDB 10.2, y este seed
--- tiene que poder importarse tambien desde el phpMyAdmin de un hosting viejo.
-
-DROP TEMPORARY TABLE IF EXISTS seq_min;
-CREATE TEMPORARY TABLE seq_min (n SMALLINT UNSIGNED PRIMARY KEY);
-
-INSERT INTO seq_min (n)
-SELECT (d.i * 10 + u.i) * 5
-FROM (SELECT 0 AS i UNION ALL SELECT 1 UNION ALL SELECT 2
-      UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5) AS d
-CROSS JOIN
-     (SELECT 0 AS i UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3
-      UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6
-      UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) AS u;
--- Resultado: 0, 5, 10, ... 295 minutos. De sobra para el servicio mas largo
--- del catalogo (90 + 15 de buffer = 105).
+-- La serie de minutos se genera con una subconsulta en linea, no con un
+-- CTE recursivo ni con una tabla temporal:
+--
+--   * los CTE recursivos exigen MySQL 8.0 / MariaDB 10.2;
+--   * CREATE TEMPORARY TABLE exige el privilegio CREATE TEMPORARY TABLES,
+--     que los hosting compartidos no conceden. InfinityFree responde
+--     "#1044 Acceso denegado" y la importacion muere a media faena,
+--     dejando el esquema creado y los datos incompletos.
+--
+-- Una tabla derivada no necesita privilegio alguno y funciona en todo lo
+-- que entienda SQL-92. Verificado importando el archivo entero.
 
 INSERT INTO appointment_slots (employee_id, slot_at, appointment_id)
 SELECT a.employee_id,
        a.starts_at + INTERVAL s.n MINUTE,
        a.id
 FROM appointments a
-JOIN seq_min s
+JOIN (
+    -- 0, 5, 10, ... 295 minutos. De sobra para el servicio mas largo del
+    -- catalogo (90 de duracion + 15 de buffer = 105).
+    SELECT (d.i * 10 + u.i) * 5 AS n
+    FROM (SELECT 0 AS i UNION ALL SELECT 1 UNION ALL SELECT 2
+          UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5) AS d
+    CROSS JOIN
+         (SELECT 0 AS i UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3
+          UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6
+          UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) AS u
+) AS s
   ON s.n < TIMESTAMPDIFF(MINUTE, a.starts_at, a.blocked_until)
 WHERE a.status <> 'cancelled';
-
-DROP TEMPORARY TABLE seq_min;
 
 -- =====================================================================
 --  RECORDATORIOS

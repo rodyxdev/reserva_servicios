@@ -71,3 +71,9 @@ $RECYCLE.BIN/
 # ---------- Despliegue ----------
 /.lftp-mirror-state
 *.log
+
+# ---------- Analisis del grafo de conocimiento ----------
+# graphify-out/ es salida generada: se reconstruye con /graphify y pesa
+# cientos de KB de HTML y JSON. Ademas incluye una cache con rutas
+# absolutas de la maquina donde se genero, que no sirven en otra.
+graphify-out/
