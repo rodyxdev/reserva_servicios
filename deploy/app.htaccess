@@ -1,0 +1,37 @@
+# =====================================================================
+#  .htaccess para la carpeta app/ cuando vive DENTRO del DocumentRoot
+# =====================================================================
+#  Lo normal es dejar src/, config/, vendor/ y .env fuera del
+#  DocumentRoot, y entonces este archivo no hace falta: lo que el
+#  servidor web no puede alcanzar no necesita permiso que se lo impida.
+#
+#  Pero hay hostings compartidos cuyo open_basedir encierra a PHP en el
+#  propio DocumentRoot (InfinityFree entre ellos). Ahi la eleccion no es
+#  "dentro o fuera": es "dentro, o la aplicacion no arranca".
+#
+#  Con app/ dentro, la unica barrera que queda es esta. Si este archivo
+#  desaparece o el hosting ignora los .htaccess, quedan expuestos por
+#  HTTP el codigo fuente y, sobre todo, las credenciales de .env.
+#  Comprueba tras cada despliegue que esto devuelve 403:
+#
+#      curl -sI https://TU-DOMINIO/app/config/settings.php
+# =====================================================================
+
+# Apache 2.4
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+
+# Apache 2.2
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>
+
+# Sin listados, por si el deny anterior no se aplicara
+Options -Indexes
+
+# Que nada de aqui se ejecute como PHP aunque se alcanzara
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>

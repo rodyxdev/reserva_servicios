@@ -264,7 +264,8 @@ Exige `--force` y se niega a correr si `APP_ENV=production`.
 ## Despliegue en InfinityFree
 
 InfinityFree es hosting compartido gratuito con PHP y MySQL. Funciona, pero tiene
-tres particularidades que rompen el despliegue si no se saben de antemano.
+cuatro particularidades que rompen el despliegue si no se saben de antemano. Las
+cuatro están documentadas aquí porque las cuatro costaron tiempo averiguarlas.
 
 ### 1. La base de datos se crea desde el panel
 
@@ -272,14 +273,32 @@ No se puede ejecutar `CREATE DATABASE` por SQL. En **Control Panel → MySQL Dat
 crea una y apunta los datos que te den: nombre (`epiz_12345678_reservas`), host
 (`sqlXXX.infinityfree.com`), usuario y contraseña.
 
-### 2. Al importar `schema.sql`, comenta las dos primeras sentencias
+### 2. Importa `deploy/import-hosting.sql`, no `schema.sql`
 
-En phpMyAdmin, selecciona tu base en el desplegable y comenta:
+`database/schema.sql` y `database/seed.sql` están escritos para un servidor propio y
+contienen tres sentencias que un hosting compartido rechaza:
 
-```sql
--- CREATE DATABASE IF NOT EXISTS reservas ...;
--- USE reservas;
-```
+| Sentencia | Qué pasa en InfinityFree |
+|---|---|
+| `CREATE DATABASE IF NOT EXISTS reservas` | El usuario no tiene el privilegio |
+| `USE reservas` | Tu base se llama `if0_XXXXXXXX_reservas`, no `reservas` |
+| `CREATE TEMPORARY TABLE seq_min` | Falta `CREATE TEMPORARY TABLES` → **`#1044 Acceso denegado`** |
+
+La tercera es la traicionera: falla **a mitad de la importación**, con el esquema ya
+creado y los datos a medias, así que parece que funcionó hasta que la aplicación
+revienta en la primera consulta.
+
+`deploy/import-hosting.sql` es la combinación de ambos archivos sin esas tres
+sentencias. En phpMyAdmin: selecciona tu base → **Importar** → ese archivo.
+
+Empieza con `DROP TABLE IF EXISTS` de las 14 tablas, así que se puede reimportar las
+veces que haga falta sin limpiar nada a mano.
+
+> El `seed.sql` original generaba la serie de minutos con una tabla temporal. Ahora usa
+> una **tabla derivada** en línea, que no necesita privilegio alguno y produce
+> exactamente el mismo resultado. Es un caso claro de decisión que parecía la más
+> portable —"una tabla temporal la entiende cualquier MySQL viejo"— y resultó ser justo
+> la que un hosting compartido no te deja ejecutar.
 
 ### 3. ⚠️ La colación: el error que más tiempo cuesta
 
@@ -298,12 +317,51 @@ generas un volcado desde un MySQL 8 propio, revísalo antes de subirlo.
 ### 4. Estructura de carpetas, y por qué el mismo `index.php` sirve para las dos
 
 El `DocumentRoot` es `/htdocs` y no se puede mover, así que el proyecto se reparte en
-dos carpetas hermanas:
+dos carpetas:
 
 ```
 /htdocs/          <- CONTENIDO de public/ (index.php, assets/, .htaccess)
-/app/             <- config/, src/, vendor/, scripts/, storage/ y el .env
-                     (fuera del alcance web: nadie puede pedirlos por HTTP)
+/htdocs/app/      <- config/, src/, vendor/, scripts/, storage/ y el .env
+```
+
+**`app/` va DENTRO de `/htdocs`, y eso merece una explicación**, porque lo correcto en
+un servidor propio es justo lo contrario.
+
+El motivo es `open_basedir`. InfinityFree encierra a PHP en el `DocumentRoot`:
+
+```
+open_basedir: /php_sessions:/home/uploads:/tmp:/var/www/errors:
+              /home/vol5_2/infinityfree.com/if0_XXXXXXXX/htdocs
+```
+
+Con `app/` fuera de ahí, el cliente FTP la sube y la lista sin problema —los archivos
+existen de verdad—, pero PHP no puede ni mirarla: `file_exists()` devuelve `false`
+sobre archivos que están. El síntoma es **idéntico** al de una subida incompleta, y por
+ese parecido es fácil pasarse horas resubiendo algo que ya estaba en su sitio.
+
+El precio de meterla dentro es real y conviene decirlo claro: **el `.env`, con la
+contraseña de MySQL, pasa a estar en una carpeta alcanzable por HTTP.** Fuera del
+`DocumentRoot` lo protegía la jerarquía de carpetas, que no depende de ninguna
+configuración; dentro, lo único que lo separa de internet es `deploy/app.htaccess`:
+
+```apache
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+```
+
+`deploy.sh` lo sube automáticamente cuando `APP_PATH` cae dentro del `DocumentRoot`, y
+avisa en rojo si no lo consigue. Aun así, **compruébalo después de cada despliegue**:
+
+```bash
+curl -sI https://tudominio.rf.gd/app/.env    # tiene que dar 403
+```
+
+Si tu hosting sí deja leer fuera del `DocumentRoot` (un VPS, o cPanel con `open_basedir`
+laxo), saca la carpeta y recuperas esa capa:
+
+```bash
+export DEPLOY_APP_PATH="/app"
 ```
 
 Fíjate en que `/htdocs` recibe el **contenido** de `public/`, no la carpeta `public`
@@ -322,34 +380,52 @@ Son dos disposiciones distintas, y `public/index.php` tiene que encontrar `vendo
 `__DIR__/../app/`.
 
 **No hace falta editar nada ni mantener dos versiones del archivo.** El front
-controller localiza la raíz de la aplicación al arrancar: prueba primero el directorio
-padre (todo junto) y luego una carpeta `app/` hermana (separado), y se queda con la
-primera que contenga de verdad `vendor/autoload.php` **y** `config/settings.php`.
-Comprueba los archivos, no solo que el directorio exista: una carpeta `app/` a medio
-subir por FTP no debe dar por buena una raíz que no funciona.
+controller localiza la raíz de la aplicación al arrancar y prueba tres ubicaciones en
+orden:
 
-Si tu hosting usa una disposición distinta a estas dos, la variable de entorno
+| | Ruta | Cuándo |
+|---|---|---|
+| A | `dirname(__DIR__)` | Todo junto: local, Docker, VPS |
+| B | `dirname(__DIR__)/app` | Separado, fuera del `DocumentRoot` |
+| C | `__DIR__/app` | Separado, dentro del `DocumentRoot` (InfinityFree) |
+
+Se queda con la primera que contenga de verdad `vendor/autoload.php` **y**
+`config/settings.php`. Comprueba los archivos, no solo que el directorio exista: una
+carpeta `app/` a medio subir por FTP no debe dar por buena una raíz que no funciona.
+
+Si tu hosting usa una disposición distinta a estas tres, la variable de entorno
 `APP_ROOT` fuerza una ruta concreta.
 
 Cuando no encuentra ninguna, no falla con un `failed to open stream` que no orienta a
-nadie: responde con un 500 que dice qué buscaba y en qué rutas miró.
+nadie: responde con un 500 que dice, **para cada ubicación y cada archivo**, si no
+existe o si existe pero PHP no puede leerlo, y además imprime el `open_basedir` vigente:
+
+```
+Se busco vendor/autoload.php y config/settings.php en:
+
+  - /home/vol5_2/infinityfree.com/if0_XXXXXXXX/htdocs/app
+      la carpeta:            correcto
+      vendor/autoload.php:   correcto
+      config/settings.php:   no existe
+
+open_basedir: /php_sessions:/tmp:/home/vol5_2/.../htdocs
+```
+
+Esa línea de `open_basedir` es la que convierte un "no encuentro la aplicación"
+indistinguible de veinte causas distintas en un diagnóstico de un vistazo.
 
 El resto del código ya era compatible sin tocar nada, porque nunca asume dónde está el
 proyecto:
 
-| Archivo | Cómo resuelve las rutas | En `/app` |
+| Archivo | Cómo resuelve las rutas | En `/htdocs/app` |
 |---|---|---|
-| `config/settings.php` | `dirname(__DIR__)` | `/app` → busca `/app/.env` ✔ |
-| `scripts/*.php` | `dirname(__DIR__)` | `/app` → `/app/vendor` ✔ |
+| `config/settings.php` | `dirname(__DIR__)` | `/htdocs/app` → busca `/htdocs/app/.env` ✔ |
+| `scripts/*.php` | `dirname(__DIR__)` | `/htdocs/app` → `/htdocs/app/vendor` ✔ |
 | `public/.htaccess` | solo `RewriteBase /` | correcto cuando `htdocs` *es* el docroot ✔ |
 
 El `.htaccess` **de la raíz del proyecto** no interviene aquí: solo sirve cuando se
 sirve el proyecto entero desde una única carpeta, y `deploy.sh` no lo sube.
 
-Si tu plan no permite escribir fuera de `htdocs`, pon `DEPLOY_APP_PATH="/htdocs/app"`.
-Funciona igual —la detección encuentra `app/` de todos modos—, pero es peor: pasas de
-que esos archivos sean inalcanzables por diseño a que dependan de que el `.htaccess`
-se aplique. Prefiere siempre sacarlos del `DocumentRoot`.
 
 ### 5. Subida por FTP
 
@@ -369,30 +445,69 @@ Las credenciales se leen de **variables de entorno**, nunca de un archivo del
 proyecto: un `deploy.conf` con la contraseña del FTP acaba en un commit tarde o
 temprano.
 
+#### lftp para lo normal, curl cuando lftp falla
+
+El script sube cada sección con `lftp mirror`, que es incremental y no resube lo que no
+ha cambiado. Después **le pregunta al servidor cuántos archivos tiene** y compara.
+
+Esa verificación existe porque contra InfinityFree se midió algo que no sabemos
+explicar: `mirror` anuncia `Transferring file` de los 52 archivos de `src/` sin un solo
+error, y solo persisten 5. Tres ejecuciones seguidas, siempre 5. Los mismos archivos
+subidos de uno en uno con `curl -T` llegan los 52.
+
+Así que el script no insiste con la herramienta que acaba de fallar: **del segundo
+intento en adelante cambia a `curl`**. Repetir el `mirror` solo repite el resultado.
+
+Interpretar la salida de `lftp` no serviría: cambia entre versiones, y una transferencia
+cortada por timeout puede no dejar ninguna línea reconocible. Contar archivos en el
+servidor responde a la única pregunta que importa.
+
+> El recuento local aplica **las mismas exclusiones** que el mirror. Cuando no lo hacía,
+> `vendor` salía como `321 de 344` en cada despliegue: los 23 de diferencia eran
+> `README.md` y `.gitignore` de los paquetes, que `--exclude-glob '*.md'` nunca sube.
+> Un despliegue perfecto marcado como incompleto para siempre.
+
 El script **no sube el `.env`**. En el servidor se crea a mano, una sola vez, con las
 credenciales de producción. Subirlo desde local machacaría la configuración del
 servidor con la de desarrollo y apuntaría la aplicación a una base que allí no existe.
 
 ### 6. Después del primer despliegue
 
-1. **Sube el `.env` a mano, una sola vez**, a `/app/.env` (la carpeta que contiene
-   `config/`). Con `APP_ENV=production`, `APP_DEBUG=false`, `APP_URL` igual a tu
-   dominio real y las credenciales de la base. `deploy.sh` no lo sube nunca, a
-   propósito: hacerlo machacaría la configuración del servidor con la de desarrollo.
-2. Da permiso de escritura a `/app/storage/logs` y `/app/storage/cache`.
+1. **Sube el `.env` a mano, una sola vez**, a `/htdocs/app/.env`. Con
+   `APP_ENV=production`, `APP_DEBUG=false`, `APP_URL` igual a tu dominio real y las
+   credenciales de la base. `deploy.sh` no lo sube nunca, a propósito: hacerlo
+   machacaría la configuración del servidor con la de desarrollo.
+
+   ```bash
+   curl -T .env.production --user "$DEPLOY_FTP_USER:$DEPLOY_FTP_PASS" \
+        "ftp://$DEPLOY_FTP_HOST/htdocs/app/.env"
+   ```
+
+2. Importa `deploy/import-hosting.sql` (ver el punto 2 de arriba).
 3. Programa el cron. InfinityFree suele permitir solo frecuencia horaria; para un
    recordatorio a 24 horas, salir con hasta una hora de desfase es irrelevante.
 
+`deploy.sh` ya crea `storage/logs` y `storage/cache` en cada ejecución.
+
 **Comprueba dos cosas antes de darlo por bueno:**
 
-- Abre `https://tudominio.rf.gd/.env` — tiene que dar **403 o 404**. Si te descarga el
-  archivo, está dentro del `DocumentRoot` y hay que moverlo.
+- Abre `https://tudominio.rf.gd/app/.env` — tiene que dar **403**. Si te descarga el
+  archivo, tu contraseña de MySQL es pública: falta `/htdocs/app/.htaccess`.
 - Abre `https://tudominio.rf.gd/health` — debe responder JSON con `"db": {"ok": true}`
   y `"time_zone": "+00:00"`.
 
 Si `/health` da error de conexión, el `.env` no está donde debe o las credenciales de
 MySQL no son correctas. Con `APP_DEBUG=false` el detalle no se muestra en pantalla: está
-en `/app/storage/logs/php-error.log`.
+en `/htdocs/app/storage/logs/php-error.log`, que puedes leer por FTP:
+
+```bash
+curl -s --user "$DEPLOY_FTP_USER:$DEPLOY_FTP_PASS" \
+     "ftp://$DEPLOY_FTP_HOST/htdocs/app/storage/logs/php-error.log" | tail -30
+```
+
+Leer el log es preferible a poner `APP_DEBUG=true` en un sitio público, aunque sea un
+minuto: con la depuración encendida las trazas de error salen en pantalla para
+cualquiera que pase por ahí.
 
 ### 7. Correo saliente
 

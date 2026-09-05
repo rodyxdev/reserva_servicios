@@ -91,6 +91,17 @@ $appRoot = (static function (): string {
     // B) separado: carpeta app/ hermana del DocumentRoot
     $candidatas[] = dirname(__DIR__) . '/app';
 
+    // C) separado DENTRO del DocumentRoot. Necesario en hostings cuyo
+    //    open_basedir encierra a PHP en el DocumentRoot: alli la opcion
+    //    B no falla por estar mal subida, falla porque PHP tiene
+    //    prohibido mirar fuera y file_exists() devuelve false sobre
+    //    archivos que existen. InfinityFree publica, por ejemplo:
+    //      open_basedir: ...:/home/vol5_2/infinityfree.com/if0_XXXX/htdocs
+    //    Al estar app/ dentro, no queda mas remedio que impedir por HTTP
+    //    lo que antes impedia la propia jerarquia de carpetas: por eso
+    //    app/ lleva su propio .htaccess que deniega todo.
+    $candidatas[] = __DIR__ . '/app';
+
     foreach ($candidatas as $ruta) {
         if (is_file($ruta . '/vendor/autoload.php') && is_file($ruta . '/config/settings.php')) {
             return $ruta;
@@ -103,13 +114,54 @@ $appRoot = (static function (): string {
     http_response_code(500);
     header('Content-Type: text/plain; charset=utf-8');
 
+    // Decir "no se encuentra" a secas no basta cuando el archivo SI
+    // existe pero PHP tiene prohibido leerlo. En hosting compartido eso
+    // pasa constantemente: open_basedir limita a PHP al DocumentRoot,
+    // asi que un vendor/ subido por FTP fuera de el existe para el
+    // cliente FTP y no existe para PHP. Sin este detalle el sintoma
+    // (is_file falso) es identico al de un archivo ausente, y se pierden
+    // horas volviendo a subir algo que ya estaba.
+    $informe = '';
+
+    foreach ($candidatas as $ruta) {
+        $informe .= "  - {$ruta}\n";
+
+        $comprobar = [
+            ''                     => 'la carpeta',
+            '/vendor/autoload.php' => 'vendor/autoload.php',
+            '/config/settings.php' => 'config/settings.php',
+        ];
+
+        foreach ($comprobar as $sufijo => $etiqueta) {
+            $completa = $ruta . $sufijo;
+            $existe   = @file_exists($completa);
+            $legible  = @is_readable($completa);
+
+            $veredicto = match (true) {
+                !$existe             => 'no existe',
+                $existe && !$legible => 'EXISTE pero PHP no puede leerlo (permisos u open_basedir)',
+                default              => 'correcto',
+            };
+
+            $informe .= sprintf("      %-22s %s\n", $etiqueta . ':', $veredicto);
+        }
+    }
+
+    $basedir = ini_get('open_basedir');
+
     exit(
         "Error de instalacion: no se encuentra la aplicacion.\n\n"
-        . "Se busco vendor/autoload.php y config/settings.php en:\n"
-        . '  - ' . implode("\n  - ", $candidatas) . "\n\n"
+        . "Se busco vendor/autoload.php y config/settings.php en:\n\n"
+        . $informe . "\n"
+        . 'open_basedir: '
+        . ($basedir !== false && $basedir !== '' ? $basedir : '(sin restriccion)') . "\n\n"
         . "Comprueba que:\n"
         . "  1. Ejecutaste 'composer install'.\n"
-        . "  2. Si separaste public/ del resto (hosting compartido), la\n"
+        . "  2. Si algo dice 'EXISTE pero PHP no puede leerlo', el problema\n"
+        . "     NO es que falten archivos: estan fuera de lo que permite\n"
+        . "     open_basedir. Mueve app/ dentro del DocumentRoot y\n"
+        . "     protegela con un .htaccess que la deniegue por HTTP.\n"
+        . "  3. Si separaste public/ del resto (hosting compartido), la\n"
         . "     carpeta app/ esta donde toca. Puedes forzar su ruta con la\n"
         . "     variable de entorno APP_ROOT.\n"
     );
