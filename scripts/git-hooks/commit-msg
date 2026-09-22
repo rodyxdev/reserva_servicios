@@ -1,0 +1,39 @@
+#!/bin/sh
+# commit-msg: quita la atribución automática de Claude del mensaje del commit.
+#
+# Segunda capa de defensa. La primera es .claude/settings.json
+# ("attribution": { "commit": "", "pr": "" }), pero un commit armado a mano
+# desde una terminal puede traer el trailer igual. Este hook lo elimina antes
+# de que el commit se cree.
+#
+# Borra, sin distinguir mayúsculas, solo líneas que EMPIEZAN con:
+#   - "Co-Authored-By: Claude ..."
+#   - "Co-Authored-By: ... <noreply@anthropic.com>"
+#   - "Generated with Claude Code" (se admite un emoji, espacios o símbolos
+#     delante, pero no texto: una frase que lo mencione a media línea se
+#     conserva)
+# y las líneas en blanco que queden al final.
+#
+# Instalación: sh scripts/setup-hooks.sh   (.git/hooks no se versiona)
+
+mensaje="$1"
+temporal="$mensaje.sin-atribucion.$$"
+
+# grep -v sale con 1 si no quedó ninguna línea; eso no es un error del hook.
+grep -v -i -E \
+  -e '^[[:space:]]*co-authored-by:[[:space:]]*claude' \
+  -e '^[[:space:]]*co-authored-by:.*noreply@anthropic\.com' \
+  -e '^[^[:alnum:]]*generated with \[?claude code' \
+  "$mensaje" > "$temporal" || true
+
+awk '
+  { lineas[NR] = $0 }
+  END {
+    n = NR
+    while (n > 0 && lineas[n] ~ /^[[:space:]]*$/) n--
+    for (i = 1; i <= n; i++) print lineas[i]
+  }
+' "$temporal" > "$mensaje"
+
+rm -f "$temporal"
+exit 0

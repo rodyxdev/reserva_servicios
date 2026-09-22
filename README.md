@@ -899,3 +899,19 @@ programador. El punto de extensión es `AvailabilityService::firstAvailableEmplo
 ## Licencia
 
 MIT — ver [LICENSE](LICENSE).
+
+## Hooks de git (una vez por clon)
+
+```bash
+sh scripts/setup-hooks.sh
+```
+
+Instala `scripts/git-hooks/commit-msg` en `.git/hooks/` (git no versiona esa
+carpeta). El hook quita del mensaje el trailer de coautoría que agregan las
+herramientas de IA antes de crear el commit. La otra capa es
+`.claude/settings.json`, versionado con el repo.
+
+## Nota de desarrollo
+
+Este proyecto fue desarrollado con asistencia de Claude (Anthropic) como
+herramienta de apoyo en el proceso de desarrollo.
